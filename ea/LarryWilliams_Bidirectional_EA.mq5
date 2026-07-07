@@ -8,7 +8,7 @@
 //|   Short: Score<=5  + Price<EMA200  -> Sell SL=+$12  TP=-$80     |
 //+------------------------------------------------------------------+
 #property copyright "Rakuten EA"
-#property version   "1.00"
+#property version   "1.10"
 #property description "Larry Williams 趨勢強度評分雙向策略 (XAUUSD M5)"
 #property description "Long:  Score>=95 + Price>EMA200 | SL=$12 TP=$80 12h"
 #property description "Short: Score<=5  + Price<EMA200 | SL=$12 TP=$80 12h"
@@ -33,6 +33,9 @@ input ulong  InpMagicNumber   = 20250707;// Magic Number
 input group "=== 方向開關 ==="
 input bool   InpEnableLong    = true;    // 啟用做多
 input bool   InpEnableShort   = true;    // 啟用做空
+
+input group "=== 調試 ==="
+input bool   InpDebugPrint    = true;    // 每bar打印分數 (Expert tab)
 
 //+------------------------------------------------------------------+
 //| 指標句柄                                                          |
@@ -108,6 +111,7 @@ int OnInit()
          " MaxHold=", InpMaxHoldHrs, "h");
    Print("  Lot=", InpLotSize, " MaxSpread=$", InpMaxSpread);
    Print("  Enable Long=", InpEnableLong, " Enable Short=", InpEnableShort);
+  Print("  Debug Print=", InpDebugPrint);
    Print("  評分: 階梯式 (匹配回測 09_5min_clean.py)");
    Print("═══════════════════════════════════════════════════════");
 
@@ -172,10 +176,25 @@ void OnTick()
    double atr_buf[1];
    CopyBuffer(h_atr14, 0, 1, 1, atr_buf);
 
-   //--- 7) 顯示面板
+   //--- 7) Debug: 每根 bar 打印評分
+   if(InpDebugPrint)
+   {
+      string dirName = "";
+      if(score >= InpLongThreshold)  dirName = " [LONG ZONE]";
+      else if(score <= InpShortThreshold) dirName = " [SHORT ZONE]";
+      Print("Bar ", TimeToString(iTime(_Symbol, PERIOD_M5, 1), TIME_DATE|TIME_MINUTES),
+            " | Score=", score, dirName,
+            " (D=", g_dirScore, " M=", g_macdScore,
+            " F=", g_fvgScore, " B=", g_bonusScore, ")",
+            " Close=$", DoubleToString(close1, 2),
+            " EMA200=$", DoubleToString(ema200_buf[0], 2),
+            " Pos=", close1 > ema200_buf[0] ? "ABOVE" : "BELOW");
+   }
+
+   //--- 8) 顯示面板
    DrawPanel(score, close1, ema200_buf[0], atr_buf[0]);
 
-   //--- 8) 做多信號: Score>=95 + Price>EMA200
+   //--- 9) 做多信號: Score>=95 + Price>EMA200
    if(InpEnableLong && score >= InpLongThreshold && close1 > ema200_buf[0])
    {
       Print("SIGNAL LONG: Score=", score,
@@ -186,7 +205,7 @@ void OnTick()
       return;
    }
 
-   //--- 9) 做空信號: Score<=5 + Price<EMA200
+   //--- 10) 做空信號: Score<=5 + Price<EMA200
    if(InpEnableShort && score <= InpShortThreshold && close1 < ema200_buf[0])
    {
       Print("SIGNAL SHORT: Score=", score,
