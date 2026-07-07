@@ -8,7 +8,7 @@
 //|   Short: Score<=5  + Price<EMA200  -> Sell SL=+$12  TP=-$80     |
 //+------------------------------------------------------------------+
 #property copyright "Rakuten EA"
-#property version   "1.10"
+#property version   "1.20"
 #property description "Larry Williams 趨勢強度評分雙向策略 (XAUUSD M5)"
 #property description "Long:  Score>=95 + Price>EMA200 | SL=$12 TP=$80 12h"
 #property description "Short: Score<=5  + Price<EMA200 | SL=$12 TP=$80 12h"
@@ -100,7 +100,7 @@ int OnInit()
    }
 
    //--- 啟動時如有持倉，同步 bar time 避免重複信號
-   if(HasOpenPosition())
+   if(HasOpenLong() || HasOpenShort())
       g_lastBarTime = iTime(_Symbol, PERIOD_M5, 0);
 
    Print("═══════════════════════════════════════════════════════");
@@ -139,12 +139,8 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   //--- 1) 有持倉 → 只檢查 MaxHold
-   if(HasOpenPosition())
-   {
-      CheckMaxHold();
-      return;
-   }
+   //--- 1) 檢查 MaxHold (所有持倉)
+   CheckMaxHold();
 
    //--- 2) 新 K 線檢測
    datetime curBar = iTime(_Symbol, PERIOD_M5, 0);
@@ -194,26 +190,24 @@ void OnTick()
    //--- 8) 顯示面板
    DrawPanel(score, close1, ema200_buf[0], atr_buf[0]);
 
-   //--- 9) 做多信號: Score>=95 + Price>EMA200
-   if(InpEnableLong && score >= InpLongThreshold && close1 > ema200_buf[0])
+   //--- 9) 做多信號: Score>=95 + Price>EMA200 (只限無 Long 倉時)
+   if(InpEnableLong && !HasOpenLong() && score >= InpLongThreshold && close1 > ema200_buf[0])
    {
       Print("SIGNAL LONG: Score=", score,
             " Dir=", g_dirScore, " MACD=", g_macdScore,
             " FVG=", g_fvgScore, " Bonus=", g_bonusScore,
             " @ ", TimeToString(iTime(_Symbol, PERIOD_M5, 1), TIME_DATE|TIME_MINUTES));
       OpenLong(score);
-      return;
    }
 
-   //--- 10) 做空信號: Score<=5 + Price<EMA200
-   if(InpEnableShort && score <= InpShortThreshold && close1 < ema200_buf[0])
+   //--- 10) 做空信號: Score<=5 + Price<EMA200 (只限無 Short 倉時)
+   if(InpEnableShort && !HasOpenShort() && score <= InpShortThreshold && close1 < ema200_buf[0])
    {
       Print("SIGNAL SHORT: Score=", score,
             " Dir=", g_dirScore, " MACD=", g_macdScore,
             " FVG=", g_fvgScore, " Bonus=", g_bonusScore,
             " @ ", TimeToString(iTime(_Symbol, PERIOD_M5, 1), TIME_DATE|TIME_MINUTES));
       OpenShort(score);
-      return;
    }
 }
 
@@ -390,16 +384,34 @@ int CalculateScore()
 }
 
 //+------------------------------------------------------------------+
-//| HasOpenPosition - 檢查任何方向的持倉                              |
+//| HasOpenLong - 檢查有無 Long 持倉                                    |
 //+------------------------------------------------------------------+
-bool HasOpenPosition()
+bool HasOpenLong()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0) continue;
       if(PositionGetInteger(POSITION_MAGIC) == (long)InpMagicNumber &&
-         PositionGetString(POSITION_SYMBOL) == _Symbol)
+         PositionGetString(POSITION_SYMBOL) == _Symbol &&
+         PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+         return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| HasOpenShort - 檢查有無 Short 持倉                                   |
+//+------------------------------------------------------------------+
+bool HasOpenShort()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetInteger(POSITION_MAGIC) == (long)InpMagicNumber &&
+         PositionGetString(POSITION_SYMBOL) == _Symbol &&
+         PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
          return true;
    }
    return false;
@@ -430,7 +442,7 @@ void CheckMaxHold()
          Print("MAX HOLD CLOSE [", dirStr, "]: ", holdMinutes/60, "h ",
                holdMinutes%60, "m | PnL=$", DoubleToString(pnl, 2));
       }
-      return;
+      // 不再 early return → 檢查所有持倉
    }
 }
 
@@ -523,45 +535,35 @@ void OpenShort(int score)
 //+------------------------------------------------------------------+
 void DrawPanel(int score, double close_price, double ema200, double atr)
 {
-   string sig = "---";
-   bool hasPos = HasOpenPosition();
+   bool hasLong  = HasOpenLong();
+   bool hasShort = HasOpenShort();
 
-   if(hasPos)
-   {
-      // 找出持倉方向
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket == 0) continue;
-         if(PositionGetInteger(POSITION_MAGIC) == (long)InpMagicNumber &&
-            PositionGetString(POSITION_SYMBOL) == _Symbol)
-         {
-            long posType = PositionGetInteger(POSITION_TYPE);
-            sig = (posType == POSITION_TYPE_BUY) ? "IN LONG" : "IN SHORT";
-            break;
-         }
-      }
-   }
+   string sig = "---";
+   if(hasLong && hasShort)
+      sig = "IN LONG + SHORT";
+   else if(hasLong)
+      sig = "IN LONG";
+   else if(hasShort)
+      sig = "IN SHORT";
+   else if(InpEnableLong && score >= InpLongThreshold && close_price > ema200)
+      sig = "LONG !!";
+   else if(InpEnableShort && score <= InpShortThreshold && close_price < ema200)
+      sig = "SHORT !!";
    else
-   {
-      if(InpEnableLong && score >= InpLongThreshold && close_price > ema200)
-         sig = "LONG !!";
-      else if(InpEnableShort && score <= InpShortThreshold && close_price < ema200)
-         sig = "SHORT !!";
-      else
-         sig = StringFormat("WAIT (S=%d)", score);
-   }
+      sig = StringFormat("WAIT (S=%d)", score);
 
    string longSt  = InpEnableLong  ? "ON" : "OFF";
    string shortSt = InpEnableShort ? "ON" : "OFF";
 
-   string info  = "=== LW Bidirectional EA v1.0 ===\n";
+   string info  = "=== LW Bidirectional EA v1.2 ===\n";
    info += StringFormat("Score: %d  (Long>=%d Short<=%d)\n",
                         score, InpLongThreshold, InpShortThreshold);
    info += StringFormat("  Dir(%d) MACD(%d) FVG(%d) Bonus(%d)\n",
                          g_dirScore, g_macdScore, g_fvgScore, g_bonusScore);
    info += StringFormat("Signal: %s\n", sig);
    info += StringFormat("Mode:   Long=%s | Short=%s\n", longSt, shortSt);
+   info += StringFormat("Positions: Long=%s Short=%s\n",
+                         hasLong ? "YES" : "no", hasShort ? "YES" : "no");
    info += "-------------------------\n";
    info += StringFormat("Close:   $%.2f\n", close_price);
    info += StringFormat("EMA200:  $%.2f\n", ema200);
